@@ -35,7 +35,7 @@ class AlignTime:
         if isinstance(filter, (tuple, list, ndarray)):
             self._filt1, self._filt2 = filter
         else:
-            self._filt1, self.filt_2 = filter, filter
+            self._filt1, self._filt2 = filter, filter
 
         if isinstance(filt_ord, (tuple, list, ndarray)):
             self._ord1, self._ord2 = filt_ord
@@ -50,7 +50,7 @@ class AlignTime:
         # line for plotting the aligned signals
         self.line = None
 
-    def fit(self, time1, data1, time2, data2, dt1=None, dt2=None):
+    def fit(self, time1, data1, time2, data2, dt1=None, dt2=None, xlim1=None, xlim2=None):
         """
         Align the two time series
 
@@ -72,6 +72,12 @@ class AlignTime:
         dt2 : {None, float}, optional
             Sampling time for the second series time stamps, if necessary. Default is None, which will be ignored and
             the mean difference in time-stamps for the first 100 samples of the provided time stamps will be used.
+        xlim1 : array_like, optional
+            X-limits for plotting series 1 data. Useful if you know approximately where the events to time sync are
+            located in the series 1 data.
+        xlim2 : array_like, optional
+            X-limits for plotting series 2 data. Useful if you now approximately where the events to time sync are
+            located in the series 2 data.
 
         Returns
         -------
@@ -104,24 +110,32 @@ class AlignTime:
             self._dt2 = dt2
 
         # filter the data
-        if filter:
+        if self._filt1:
             b1, a1 = butter(self._ord1, 2 * self._cut1 * self._dt1, btype='low')
-            b2, a2 = butter(self._ord2, 2 * self._cut2 * self._dt2, btype='low')
-
             self._x1 = filtfilt(b1, a1, self._rx1)
-            self._x2 = filtfilt(b2, a2, self._rx2)
         else:
             self._x1 = self._rx1
-            self._x2 = self._rx2
 
+        if self._filt2:
+            b2, a2 = butter(self._ord2, 2 * self._cut2 * self._dt2, btype='low')
+            self._x2 = filtfilt(b2, a2, self._rx2)
+        else:
+            self._x2 = self._rx2
+            
         # plot the data
         self._f, (self._ax1, self._ax2) = plt.subplots(2, figsize=(20, 10))
 
-        if filter:
+        if self._filt1:
             self._ax1.plot(self._t1, self._rx1, color='C0', linewidth=1.5, label='Raw', alpha=0.7)
+        if self._filt2:
             self._ax2.plot(self._t2, self._rx2, color='C0', linewidth=1.5, label='Raw', alpha=0.7)
         self._ax1.plot(self._t1, self._x1, color='C1', linewidth=2, label='Filtered')
         self._ax2.plot(self._t2, self._x2, color='C1', linewidth=2, label='Filtered')
+
+        if xlim1 is not None:
+            self._ax1.set_xlim(xlim1)
+        if xlim2 is not None:
+            self._ax2.set_xlim(xlim2)
 
         self._ax1.legend(loc='best')
         self._ax2.legend(loc='best')
@@ -137,6 +151,9 @@ class AlignTime:
         self._span2 = SpanSelector(self._ax2, self._on_select2, 'horizontal', useblit=True,
                                    rectprops=dict(alpha=0.5, facecolor='red'), button=1, span_stays=True)
 
+        self._cursor2.set_active(False)
+        self._span2.set_visible(False)
+
         self._f.tight_layout()
 
         plt.show(block=True)
@@ -151,6 +168,9 @@ class AlignTime:
         self._ta = arange(self._t1[start], self._t1[stop], self._dt2)
 
         self._a = f(self._ta)
+
+        self._cursor2.set_active(True)
+        self._span2.set_visible(True)
 
     def _on_select2(self, xmin, xmax):
         self._ax2.set_title(None)
@@ -180,5 +200,3 @@ class AlignTime:
         if self.line is not None:
             self.line.set_data([], [])
         self.line, = self._ax2.plot(t_pl, x_pl, color='C2', label='Aligned')
-
-
