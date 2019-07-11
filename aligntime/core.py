@@ -5,16 +5,18 @@ Lukas Adamowicz
 GNU GPL 3.0
 May 28, 2019
 """
-from numpy import mean, diff, searchsorted, argmax, abs as nabs, zeros, arange, ndarray
+from numpy import mean, diff, searchsorted, argmax, abs as nabs, zeros, arange, ndarray, timedelta64
 from scipy.signal import butter, filtfilt
 from scipy.interpolate import interp1d
 from scipy import fftpack
 import matplotlib.pyplot as plt
+from matplotlib.dates import num2date, date2num, drange
 from matplotlib.widgets import SpanSelector, Cursor
+from pandas import to_timedelta, to_datetime
 
 
 class AlignTime:
-    def __init__(self, filter=True, filt_ord=4, filt_cut=5):
+    def __init__(self, filter=True, filt_ord=4, filt_cut=5, datetime=False):
         """
         Method for aligning time-stamps of different time series data
 
@@ -30,6 +32,9 @@ class AlignTime:
             Low-pass filter cutoffs for the filtering process. Either a signal float for both data series, or an
             array_like of 2 floats, with orders for the first and second time series. Default is 5Hz. Ignored if filter
             is False.
+        datetime : bool, optional
+            Whether or not datetime units are provided for the the time. Default is False, in which case seconds
+            are expected
         """
         # assign values as appropriate
         if isinstance(filter, (tuple, list, ndarray)):
@@ -47,10 +52,12 @@ class AlignTime:
         else:
             self._cut1, self._cut2 = filt_cut, filt_cut
 
+        self.datetime = datetime
+
         # line for plotting the aligned signals
         self.line = None
 
-    def fit(self, time1, data1, time2, data2, dt1=None, dt2=None, xlim1=None, xlim2=None):
+    def fit(self, time1, data1, time2, data2, dt1=None, dt2=None, xlim1=None, xlim2=None, xnear1=None, xnear2=None):
         """
         Align the two time series
 
@@ -78,6 +85,10 @@ class AlignTime:
         xlim2 : array_like, optional
             X-limits for plotting series 2 data. Useful if you now approximately where the events to time sync are
             located in the series 2 data.
+        xnear1 : float, optional
+            X-value where to search near in the first signal. Will be marked on the graph with a vertical line.
+        xnear2 : float, optional
+            X-value where to search near in the second signal. Will be marked on the graph with a vertical line.
 
         Returns
         -------
@@ -101,24 +112,30 @@ class AlignTime:
 
         # compute the sampling times
         if dt1 is None:
-            self._dt1 = mean(diff(self._t1[:100]))
+            if self.datetime:
+                self._dt1 = mean(diff(self._t1[:100])) / timedelta64(1, 's')
+            else:
+                self._dt1 = mean(diff(self._t1[:100]))
         else:
             self._dt1 = dt1
         if dt2 is None:
-            self._dt2 = mean(diff(self._t2[:100]))
+            if self.datetime:
+                self._dt2 = mean(diff(self._t2[:100])) / timedelta64(1, 's')
+            else:
+                self._dt2 = mean(diff(self._t2[:100]))
         else:
             self._dt2 = dt2
 
         # filter the data
         if self._filt1:
-            b1, a1 = butter(self._ord1, 2 * self._cut1 * self._dt1, btype='low')
-            self._x1 = filtfilt(b1, a1, self._rx1)
+            fc1 = butter(self._ord1, 2 * self._cut1 * self._dt1, btype='low')
+            self._x1 = filtfilt(fc1[0], fc1[1], self._rx1)
         else:
             self._x1 = self._rx1
 
         if self._filt2:
-            b2, a2 = butter(self._ord2, 2 * self._cut2 * self._dt2, btype='low')
-            self._x2 = filtfilt(b2, a2, self._rx2)
+            fc2 = butter(self._ord2, 2 * self._cut2 * self._dt2, btype='low')
+            self._x2 = filtfilt(fc2[0], fc2[1], self._rx2)
         else:
             self._x2 = self._rx2
             
@@ -136,6 +153,11 @@ class AlignTime:
             self._ax1.set_xlim(xlim1)
         if xlim2 is not None:
             self._ax2.set_xlim(xlim2)
+
+        if xnear1 is not None:
+            self._ax1.axvline(xnear1, color='k', linewidth=3, alpha=0.5)
+        if xnear2 is not None:
+            self._ax2.axvline(xnear2, color='k', linewidth=3, alpha=0.5)
 
         self._ax1.legend(loc='best')
         self._ax2.legend(loc='best')
@@ -162,10 +184,18 @@ class AlignTime:
 
     def _on_select1(self, xmin, xmax):
         self._ax1.set_title(None)
-        start, stop = searchsorted(self._t1, (xmin, xmax))
+        if self.datetime:
+            t1 = date2num(self._t1)
+        else:
+            t1 = self._t1
 
-        f = interp1d(self._t1[start - 10:stop + 10], self._x1[start - 10:stop + 10], kind='cubic')
-        self._ta = arange(self._t1[start], self._t1[stop], self._dt2)
+        start, stop = searchsorted(t1, (xmin, xmax))
+
+        f = interp1d(t1[start - 10:stop + 10], self._x1[start - 10:stop + 10], kind='cubic')
+        if self.datetime:
+            self._ta = drange(self._t1[start], self._t1[stop], to_timedelta(self._dt2, unit='s'))
+        else:
+            self._t1 = arange(self._t1[start], self._t1[stop], self._dt2)
 
         self._a = f(self._ta)
 
@@ -174,10 +204,14 @@ class AlignTime:
 
     def _on_select2(self, xmin, xmax):
         self._ax2.set_title(None)
-        start, stop = searchsorted(self._t2, (xmin, xmax))
+        if self.datetime:
+            t2 = date2num(self._t2)
+        else:
+            t2 = self._t2
+        start, stop = searchsorted(t2, (xmin, xmax))
 
         self._b = zeros(self._a.shape)
-        self._tb = self._t2[stop - self._a.size:stop]
+        self._tb = t2[stop - self._a.size:stop]
 
         self._b[-(stop - start):] = self._x2[start:stop]
 
@@ -191,12 +225,16 @@ class AlignTime:
         self.t1_0 = self._ta[0]  # find the time value in the first signal
         self.t2_0 = self._tb[self._ind_shift]  # find the time value in the second signal
 
-        # time difference between the signals
-        self.t_diff = self.t2_0 - self.t1_0
-
         t_pl = self._ta + (self.t2_0 - self.t1_0)
         x_pl = self._a
 
         if self.line is not None:
             self.line.set_data([], [])
         self.line, = self._ax2.plot(t_pl, x_pl, color='C2', label='Aligned')
+
+        if self.datetime:
+            self.t1_0 = to_datetime(num2date(self.t1_0)).tz_localize(None)
+            self.t2_0 = to_datetime(num2date(self.t2_0)).tz_localize(None)
+
+        # time difference between the signals
+        self.t_diff = self.t2_0 - self.t1_0
