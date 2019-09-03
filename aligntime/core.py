@@ -238,3 +238,5 @@ class AlignTime:
 
         # time difference between the signals
         self.t_diff = self.t2_0 - self.t1_0
+
+
